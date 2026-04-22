@@ -4,7 +4,7 @@ export type Shift = 'Morning' | 'Night';
 export type Direction = 'To Work' | 'Home';
 export type BookingStatus = 'Confirmed' | 'Cancelled' | 'NoShow';
 
-export type UserRole = 'Admin' | 'Employee' | 'Guest';
+export type UserRole = 'Admin' | 'Employee' | 'Guest' | 'Driver';
 
 export interface Route {
   id: string;
@@ -53,4 +53,5 @@ export interface Booking {
   pickupPointId: string;
   time: string;
   status: BookingStatus;
+  boarded?: boolean;
 }

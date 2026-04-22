@@ -20,6 +20,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
   { id: 'e2', firstName: 'Wipa', lastName: 'Sookjai', employeeId: 'EMP002', department: 'HR', role: 'Employee' },
   { id: 'e3', firstName: 'Anan', lastName: 'Panya', employeeId: 'EMP003', department: 'Finance', role: 'Admin' },
   { id: 'e4', firstName: 'Malee', lastName: 'Raksit', employeeId: 'EMP004', department: 'Marketing', role: 'Employee' },
+  { id: 'e5', firstName: 'Somchai', lastName: 'Krub', employeeId: 'DRV001', department: 'Transport', role: 'Driver' },
 ];
 
 export const INITIAL_TIME_SLOTS: TimeSlot[] = [

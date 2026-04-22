@@ -27,11 +27,14 @@ import {
   Sun,
   Moon,
   Languages,
-  Calendar
+  Calendar,
+  QrCode
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { supabase } from './services/supabaseClient';
 import { 
   Route, 
@@ -75,8 +78,10 @@ const translations = {
     noKeepIt: "No, Keep it", yesCancel: "Yes, Cancel", unknownRoute: "Unknown Route", unknownPoint: "Unknown Point", unknownEmployee: "Unknown Employee",
     noBookingsToday: "No bookings for today", seats: "Seats", van: "Van", bus: "Bus",
     bookWeekly: "Book for entire week (Mon-Sat)", weeklyBooking: "Weekly Booking",
-    admin: "Admin", guest: "Guest", login: "Login", logout: "Logout", selectRole: "Select Role to Login", role: "Role",
-    accessDenied: "Access Denied", accessDeniedDesc: "You don't have permission to view this page."
+    admin: "Admin", guest: "Guest", driver: "Driver", login: "Login", logout: "Logout", selectRole: "Select Role to Login", role: "Role",
+    dailyReport: "Daily Report",
+    accessDenied: "Access Denied", accessDeniedDesc: "You don't have permission to view this page.",
+    driverDashboard: "Driver Dashboard", selectLicensePlate: "Select License Plate", scanQR: "Scan QR", boarded: "Boarded", pending: "Pending", checkIn: "Check In", passengerList: "Passenger List", scanToVerify: "Scan to Verify", manualCheckIn: "Manual Check In", qrScanner: "QR Scanner", closeScanner: "Close Scanner", invalidQR: "Invalid QR Code", boardingSuccess: "Boarding Successful", alreadyBoarded: "Already Boarded", markNoShow: "Mark No Show", markedNoShow: "Marked as No Show"
   },
   th: {
     appName: "ระบบจองรถรับส่ง", dashboard: "แดชบอร์ด", routes: "สายรถ", pickups: "จุดรับส่ง", times: "เวลา", employees: "พนักงาน", booking: "จองรถ", myBookings: "การจองของฉัน",
@@ -98,9 +103,10 @@ const translations = {
     noKeepIt: "ไม่, เก็บไว้", yesCancel: "ใช่, ยกเลิก", unknownRoute: "ไม่พบสายรถ", unknownPoint: "ไม่พบจุดรับส่ง", unknownEmployee: "ไม่พบพนักงาน",
     noBookingsToday: "ไม่มีการจองในวันนี้", seats: "ที่นั่ง", van: "รถตู้", bus: "รถบัส",
     bookWeekly: "จองทั้งสัปดาห์ (จันทร์-เสาร์)", weeklyBooking: "จองรายสัปดาห์",
-    admin: "ผู้ดูแลระบบ", guest: "ผู้เยี่ยมชม", login: "เข้าสู่ระบบ", logout: "ออกจากระบบ", selectRole: "เลือกสิทธิ์เพื่อเข้าสู่ระบบ", role: "สิทธิ์",
+    admin: "ผู้ดูแลระบบ", guest: "ผู้เยี่ยมชม", driver: "พนักงานขับรถ", login: "เข้าสู่ระบบ", logout: "ออกจากระบบ", selectRole: "เลือกสิทธิ์เพื่อเข้าสู่ระบบ", role: "สิทธิ์",
     dailyReport: "รายงานประจำวัน",
-    accessDenied: "ปฏิเสธการเข้าถึง", accessDeniedDesc: "คุณไม่มีสิทธิ์ในการเข้าชมหน้านี้"
+    accessDenied: "ปฏิเสธการเข้าถึง", accessDeniedDesc: "คุณไม่มีสิทธิ์ในการเข้าชมหน้านี้",
+    driverDashboard: "หน้าจอพนักงานขับรถ", selectLicensePlate: "เลือกทะเบียนรถ", scanQR: "สแกน QR", boarded: "ขึ้นรถแล้ว", pending: "รอขึ้นรถ", checkIn: "เช็คชื่อ", passengerList: "รายชื่อผู้โดยสาร", scanToVerify: "สแกนเพื่อตรวจสอบ", manualCheckIn: "เช็คชื่อด้วยตนเอง", qrScanner: "เครื่องสแกน QR", closeScanner: "ปิดเครื่องสแกน", invalidQR: "QR Code ไม่ถูกต้อง", boardingSuccess: "เช็คชื่อสำเร็จ", alreadyBoarded: "ขึ้นรถแล้ว", markNoShow: "ระบุว่าไม่มา", markedNoShow: "บันทึกสถานะไม่มาขึ้นรถแล้ว"
   }
 };
 
@@ -162,12 +168,17 @@ export default function App() {
   const [employeeIdInput, setEmployeeIdInput] = useState('');
   const [loginError, setLoginError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'routes' | 'pickups' | 'employees' | 'booking' | 'my-bookings' | 'daily-report'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'routes' | 'pickups' | 'employees' | 'booking' | 'my-bookings' | 'daily-report' | 'driver-dashboard'>(() => {
     const saved = localStorage.getItem('shuttle-role');
     if (saved === 'Employee') return 'booking';
+    if (saved === 'Driver') return 'driver-dashboard';
     return 'dashboard';
   });
   const [isSidebarOpen, setIsSidebarOpen] = useState(typeof window !== 'undefined' && window.innerWidth >= 1024);
+  const [driverRouteId, setDriverRouteId] = useState('');
+  const [driverShift, setDriverShift] = useState<'Morning' | 'Night'>('Morning');
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerMessage, setScannerMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     const saved = localStorage.getItem('shuttle-theme');
     if (saved) return saved === 'dark';
@@ -209,27 +220,33 @@ export default function App() {
         const { data: routesData, error: routesError } = await supabase.from('routes').select('*');
         if (routesError) console.error('Error fetching routes:', routesError);
         if (routesData) {
-          setRoutes(routesData.map((r: any) => ({
+          const mappedRoutes = routesData.map((r: any) => ({
             id: r.id,
             name: r.name,
             code: r.code,
             type: r.type,
             capacity: r.capacity,
             status: r.status,
-          })));
+          }));
+          if (mappedRoutes.length > 0) {
+            setRoutes(mappedRoutes);
+          }
         }
 
         const { data: pickupsData, error: pickupsError } = await supabase.from('pickups').select('*');
         if (pickupsError) console.error('Error fetching pickups:', pickupsError);
         if (pickupsData) {
-          setPickups(pickupsData.map((p: any) => ({
+          const mappedPickups = pickupsData.map((p: any) => ({
             id: p.id,
             name: p.name,
             routeId: p.routeid,
             time: p.time,
             shift: p.shift || 'Morning',
             direction: p.direction || 'To Work',
-          })));
+          }));
+          if (mappedPickups.length > 0) {
+            setPickups(mappedPickups);
+          }
         }
         
         const { data: employeesData, error: employeesError } = await supabase.from('employees').select('*');
@@ -244,13 +261,15 @@ export default function App() {
             role: emp.role || 'Employee',
             phone: emp.phone,
           }));
-          setEmployees(mappedEmployees);
+          if (mappedEmployees.length > 0) {
+            setEmployees(mappedEmployees);
+          }
         }
 
         const { data: timesData, error: timesError } = await supabase.from('time_slots').select('*');
         if (timesError) console.error('Error fetching time slots:', timesError);
         if (timesData) {
-          setTimeSlots(timesData.flatMap((t: any) => {
+          const mappedTimes = timesData.flatMap((t: any) => {
             const slots = [];
             if (t.time_to_work) {
               slots.push({ id: `${t.id}-to-work`, shift: t.shift, direction: 'To Work', time: t.time_to_work });
@@ -259,13 +278,16 @@ export default function App() {
               slots.push({ id: `${t.id}-home`, shift: t.shift, direction: 'Home', time: t.time_home });
             }
             return slots;
-          }));
+          });
+          if (mappedTimes.length > 0) {
+            setTimeSlots(mappedTimes);
+          }
         }
         
         const { data: bookingsData, error: bookingsError } = await supabase.from('bookings').select('*');
         if (bookingsError) console.error('Error fetching bookings:', bookingsError);
         if (bookingsData) {
-          setBookings(bookingsData.map((b: any) => ({
+          const mappedBookings = bookingsData.map((b: any) => ({
             id: b.id,
             employeeId: b.employeeid,
             date: b.date,
@@ -275,7 +297,11 @@ export default function App() {
             pickupPointId: b.pickuppointid,
             time: b.time,
             status: b.status,
-          })));
+            boarded: b.boarded,
+          }));
+          if (mappedBookings.length > 0) {
+            setBookings(mappedBookings);
+          }
         }
       } catch (err) {
         console.error('Unexpected error fetching data:', err);
@@ -748,7 +774,51 @@ export default function App() {
 
   const renderDashboard = () => (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Summary Cards - Mobile: Combined, Desktop: Grid */}
+      <div className="block md:hidden">
+        <Card className="p-4 bg-white dark:bg-slate-900 border-none shadow-sm">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex items-center space-x-3 p-3 bg-blue-50/50 dark:bg-blue-900/10 rounded-2xl border border-blue-100/50 dark:border-blue-800/20">
+              <div className="p-2 bg-blue-500 text-white rounded-xl shadow-lg shadow-blue-500/20">
+                <Bus size={18} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider truncate">{t.totalRoutes}</p>
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100 leading-none">{stats.totalRoutes}</h3>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3 p-3 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-2xl border border-emerald-100/50 dark:border-emerald-800/20">
+              <div className="p-2 bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/20">
+                <CalendarCheck size={18} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider truncate">{t.todayBookings}</p>
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100 leading-none">{stats.todayBookings}</h3>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3 p-3 bg-amber-50/50 dark:bg-amber-900/10 rounded-2xl border border-amber-100/50 dark:border-amber-800/20">
+              <div className="p-2 bg-amber-500 text-white rounded-xl shadow-lg shadow-amber-500/20">
+                <MapPin size={18} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider truncate">{t.pickups}</p>
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100 leading-none">{stats.totalPickups}</h3>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3 p-3 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-2xl border border-indigo-100/50 dark:border-indigo-800/20">
+              <div className="p-2 bg-indigo-500 text-white rounded-xl shadow-lg shadow-indigo-500/20">
+                <ArrowRightLeft size={18} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider truncate">{t.cumulativeBookings}</p>
+                <h3 className="text-base font-black text-slate-800 dark:text-slate-100 leading-none">{stats.cumulativeBookings}</h3>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <div className="hidden md:grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="p-6 flex items-center space-x-4">
           <div className="p-3 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-xl">
             <Bus size={24} />
@@ -815,7 +885,7 @@ export default function App() {
             <table className="w-full text-left">
               <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider">
                 <tr>
-                  <th className="px-4 sm:px-6 py-3 font-semibold">{t.employee}</th>
+                  <th className="px-4 sm:px-6 py-3 font-semibold" style={{ width: 'auto', height: 'auto' }}>{t.employee}</th>
                   <th className="px-4 sm:px-6 py-3 font-semibold">{t.pickupPoint}</th>
                   <th className="px-4 sm:px-6 py-3 font-semibold">{t.shift}</th>
                 </tr>
@@ -823,9 +893,9 @@ export default function App() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {todayBookings.length > 0 ? todayBookings.map(b => (
                   <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-700 dark:text-slate-300">{getEmployeeName(b.employeeId)}</td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{getPickupName(b.pickupPointId)}</td>
-                    <td className="px-4 sm:px-6 py-4">
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">{getEmployeeName(b.employeeId)}</td>
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{getPickupName(b.pickupPointId)}</td>
+                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                       <Badge variant={b.shift === 'Morning' ? 'warning' : 'info'}>{b.shift === 'Morning' ? t.morning : t.night}</Badge>
                     </td>
                   </tr>
@@ -855,14 +925,14 @@ export default function App() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {routes.map(r => (
                   <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 sm:px-6 py-4">
+                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-slate-700 dark:text-slate-300">{r.name}</div>
                       <div className="text-xs text-slate-400 dark:text-slate-500">{r.code}</div>
                     </td>
-                    <td className="px-4 sm:px-6 py-4">
+                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                       <Badge variant={r.status === 'Active' ? 'success' : 'danger'}>{r.status === 'Active' ? t.active : t.maintenance}</Badge>
                     </td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">
                       {todayBookings.filter(b => b.routeId === r.id).length} / {r.capacity}
                     </td>
                   </tr>
@@ -918,16 +988,16 @@ export default function App() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filtered.map(r => (
                   <tr key={r.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 sm:px-6 py-4">
+                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-slate-700 dark:text-slate-300">{r.name}</div>
                       <div className="text-xs text-slate-400 dark:text-slate-500">{r.code}</div>
                     </td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{r.type === 'Van' ? t.van : t.bus}</td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{r.capacity} {t.seats}</td>
-                    <td className="px-4 sm:px-6 py-4">
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{r.type === 'Van' ? t.van : t.bus}</td>
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{r.capacity} {t.seats}</td>
+                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                       <Badge variant={r.status === 'Active' ? 'success' : 'danger'}>{r.status === 'Active' ? t.active : t.maintenance}</Badge>
                     </td>
-                    <td className="px-4 sm:px-6 py-4 text-right">
+                    <td className="px-4 sm:px-6 py-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end space-x-2">
                         <button 
                           onClick={() => { setEditingRoute(r); setIsRouteModalOpen(true); }}
@@ -1012,18 +1082,18 @@ export default function App() {
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {routePickups.map(p => (
                       <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="px-4 sm:px-6 py-4 text-sm font-medium text-slate-700 dark:text-slate-300">{p.name}</td>
-                        <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                        <td className="px-4 sm:px-6 py-4 text-sm font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">{p.name}</td>
+                        <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${p.shift === 'Morning' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'}`}>
                             {p.shift === 'Morning' ? t.morning : t.night}
                           </span>
                         </td>
-                        <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                        <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${p.direction === 'To Work' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400'}`}>
                             {p.direction === 'To Work' ? t.toWork : t.home}
                           </span>
                         </td>
-                        <td className="px-4 sm:px-6 py-4 text-right">
+                        <td className="px-4 sm:px-6 py-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end space-x-2">
                             <button 
                               onClick={() => { setEditingPickup(p); setIsPickupModalOpen(true); }}
@@ -1146,7 +1216,7 @@ export default function App() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filtered.map(e => (
                   <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 sm:px-6 py-4">
+                    <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center space-x-3">
                         <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center text-xs font-bold">
                           {e.firstName?.[0] || ''}{e.lastName?.[0] || ''}
@@ -1154,15 +1224,15 @@ export default function App() {
                         <div className="text-sm font-medium text-slate-700 dark:text-slate-300">{e.firstName} {e.lastName}</div>
                       </div>
                     </td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{e.employeeId}</td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{e.department}</td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">{e.phone || '-'}</td>
-                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{e.employeeId}</td>
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{e.department}</td>
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{e.phone || '-'}</td>
+                    <td className="px-4 sm:px-6 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${e.role === 'Admin' ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400'}`}>
                         {e.role}
                       </span>
                     </td>
-                    <td className="px-4 sm:px-6 py-4 text-right">
+                    <td className="px-4 sm:px-6 py-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end space-x-2">
                         <button 
                           onClick={() => { setEditingEmployee(e); setIsEmployeeModalOpen(true); }}
@@ -1324,7 +1394,8 @@ export default function App() {
   };
 
   const renderMyBookings = () => {
-    const myBookings = bookings.filter(b => b.employeeId === currentEmployeeId && b.status === 'Confirmed');
+    const today = new Date().toISOString().split('T')[0];
+    const myBookings = bookings.filter(b => b.employeeId === currentEmployeeId && b.status === 'Confirmed' && b.date === today);
 
     return (
       <div className="space-y-6">
@@ -1341,10 +1412,26 @@ export default function App() {
                   <div className="text-sm text-slate-400 font-medium uppercase tracking-wider">{t.bookingId}: {b.id.toUpperCase()}</div>
                   <div className="text-lg font-bold text-slate-800 dark:text-slate-100">{new Date(b.date).toLocaleDateString(lang === 'th' ? 'th-TH' : 'en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
                 </div>
-                <Badge variant="success">{t.confirmed}</Badge>
+                {b.boarded ? (
+                  <Badge variant="success">{t.boarded}</Badge>
+                ) : (
+                  <Badge variant="success">{t.confirmed}</Badge>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4 mb-6">
+                {b.boarded ? (
+                  <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl col-span-2 flex flex-col justify-center items-center text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800/30">
+                    <CheckCircle2 size={48} className="mb-2" />
+                    <p className="font-semibold">{t.boardingSuccess}</p>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl col-span-2 flex justify-center items-center">
+                    <div className="bg-white p-2 rounded-xl">
+                      <QRCodeSVG value={b.id} size={120} />
+                    </div>
+                  </div>
+                )}
                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
                   <p className="text-xs text-slate-400 mb-1">{t.shift} & {t.direction}</p>
                   <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
@@ -1401,6 +1488,304 @@ export default function App() {
     );
   };
 
+  const handleManualCheckIn = async (bookingId: string) => {
+    const { error } = await supabase.from('bookings').update({ boarded: true }).eq('id', bookingId);
+    if (error) {
+      console.error('Error updating booking:', error);
+      alert('Failed to update booking in database');
+      return;
+    }
+    setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, boarded: true } : b));
+    setScannerMessage({ type: 'success', text: t.boardingSuccess });
+    setTimeout(() => setScannerMessage(null), 3000);
+  };
+
+  const handleNoShow = async (bookingId: string) => {
+    const { error } = await supabase.from('bookings').update({ status: 'NoShow' }).eq('id', bookingId);
+    if (error) {
+      console.error('Error updating booking:', error);
+      alert('Failed to update booking in database');
+      return;
+    }
+    setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: 'NoShow' } : b));
+    setScannerMessage({ type: 'success', text: t.markedNoShow });
+    setTimeout(() => setScannerMessage(null), 3000);
+  };
+
+  const handleQRScan = async (scannedId: string) => {
+    setIsScannerOpen(false);
+    const booking = bookings.find(b => b.id === scannedId);
+    if (!booking) {
+      setScannerMessage({ type: 'error', text: t.invalidQR });
+      setTimeout(() => setScannerMessage(null), 3000);
+      return;
+    }
+    
+    if (booking.boarded) {
+      setScannerMessage({ type: 'error', text: t.alreadyBoarded });
+      setTimeout(() => setScannerMessage(null), 3000);
+      return;
+    }
+
+    const { error } = await supabase.from('bookings').update({ boarded: true }).eq('id', scannedId);
+    if (error) {
+      console.error('Error updating booking:', error);
+      alert('Failed to update booking in database');
+      return;
+    }
+
+    // Mark as boarded
+    setBookings(prev => prev.map(b => b.id === scannedId ? { ...b, boarded: true } : b));
+    setScannerMessage({ type: 'success', text: t.boardingSuccess });
+    setTimeout(() => setScannerMessage(null), 3000);
+  };
+
+  useEffect(() => {
+    if (isScannerOpen) {
+      const scanner = new Html5QrcodeScanner('reader', { qrbox: { width: 250, height: 250 }, fps: 5 }, false);
+      scanner.render((text) => {
+        scanner.clear();
+        handleQRScan(text);
+      }, () => {});
+      return () => {
+        scanner.clear().catch(e => console.error(e));
+      };
+    }
+  }, [isScannerOpen]);
+
+  const renderDriverDashboard = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const driverBookings = bookings.filter(b => 
+      b.date === today && 
+      (b.status === 'Confirmed' || b.status === 'NoShow') && 
+      b.routeId === driverRouteId && 
+      b.shift === driverShift
+    );
+
+    if (!driverRouteId) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[70vh] p-4 text-center animate-in fade-in zoom-in duration-500">
+          <div className="w-24 h-24 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-3xl flex items-center justify-center mb-6 shadow-xl shadow-blue-500/10 rotate-3">
+            <Bus size={48} />
+          </div>
+          <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-2">{t.driverDashboard}</h3>
+          <p className="text-slate-500 dark:text-slate-400 mb-10 max-w-xs mx-auto">
+            {lang === 'th' ? 'กรุณาเลือกทะเบียนรถและกะเวลาเพื่อเริ่มรับผู้โดยสาร' : 'Please select license plate and shift to start accepting passengers'}
+          </p>
+          
+          <Card className="w-full max-w-sm p-8 border-t-4 border-t-blue-500">
+            <div className="space-y-6 text-left">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">{t.selectLicensePlate}</label>
+                <select 
+                  value={driverRouteId}
+                  onChange={(e) => setDriverRouteId(e.target.value)}
+                  className="w-full px-4 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-lg font-bold text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all appearance-none cursor-pointer"
+                >
+                  <option value="">{t.chooseRoute}</option>
+                  {routes.map(r => (
+                    <option key={r.id} value={r.id}>{r.code} - {r.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">{t.shift}</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setDriverShift('Morning')}
+                    className={`py-4 rounded-2xl font-bold transition-all ${driverShift === 'Morning' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-none' : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}`}
+                  >
+                    {t.morning}
+                  </button>
+                  <button
+                    onClick={() => setDriverShift('Night')}
+                    className={`py-4 rounded-2xl font-bold transition-all ${driverShift === 'Night' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 dark:shadow-none' : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'}`}
+                  >
+                    {t.night}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      );
+    }
+
+    const activeRoute = routes.find(r => r.id === driverRouteId);
+
+    return (
+      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <h3 className="font-bold text-slate-800 dark:text-slate-100" style={{ fontSize: '15px' }}>{t.driverDashboard}</h3>
+            <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs font-bold rounded-lg leading-none uppercase">
+              {activeRoute?.code}
+            </span>
+          </div>
+          <button 
+            onClick={() => setDriverRouteId('')}
+            className="text-sm text-blue-600 dark:text-blue-400 font-bold hover:underline"
+          >
+            {lang === 'th' ? 'เปลี่ยนรถ/สายรถ' : 'Change Vehicle/Route'}
+          </button>
+        </div>
+
+        <Card className="p-6" style={{ height: '167px', width: '348px', paddingLeft: '15px', marginLeft: '0px', marginTop: '-14px' }}>
+          <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h4 className="font-semibold text-slate-800 dark:text-slate-100">{t.passengerList} ({driverBookings.length})</h4>
+                <button 
+                  onClick={() => setIsScannerOpen(true)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center space-x-2 transition-colors"
+                >
+                  <QrCode size={18} />
+                  <span>{t.scanQR}</span>
+                </button>
+              </div>
+
+              {scannerMessage && (
+                <div className={`p-4 rounded-xl ${scannerMessage.type === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}`}>
+                  {scannerMessage.text}
+                </div>
+              )}
+
+              {isScannerOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                  <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl w-full max-w-md">
+                    <h3 className="text-lg font-bold text-center mb-4 text-slate-800 dark:text-slate-100">{t.scanToVerify}</h3>
+                    <div id="reader" className="w-full bg-black rounded-xl overflow-hidden"></div>
+                    <button 
+                      onClick={() => setIsScannerOpen(false)} 
+                      className="mt-4 w-full p-3 bg-rose-500 hover:bg-rose-600 text-white rounded-xl transition-colors"
+                    >
+                      {t.closeScanner}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Passenger List Container */}
+              <div className="mt-4">
+                {/* Mobile View: Extra Compact List */}
+                <div className="md:hidden space-y-2">
+                  {driverBookings.length > 0 ? driverBookings.map(b => {
+                    const emp = employees.find(e => e.id === b.employeeId);
+                    return (
+                      <div key={b.id} className="bg-white dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-800/80 shadow-sm transition-all active:bg-slate-50" style={{ height: '80px', marginLeft: '0px', marginTop: '1px', paddingLeft: '12px', paddingTop: '5px', marginRight: '-14px' }}>
+                        <div className="flex justify-between items-center mb-2">
+                          <p className="font-bold text-slate-800 dark:text-slate-100 truncate mr-2" style={{ fontSize: '14px' }}>
+                            {emp ? `${emp.firstName} ${emp.lastName}` : t.unknownEmployee}
+                          </p>
+                          <div className="flex-shrink-0 scale-90 origin-right">
+                            {b.status === 'NoShow' ? (
+                              <Badge variant="danger">{t.noShow}</Badge>
+                            ) : b.boarded ? (
+                              <Badge variant="success">{t.boarded}</Badge>
+                            ) : (
+                              <Badge variant="warning">{t.pending}</Badge>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="flex justify-between items-center text-[10px]">
+                          <p className="text-slate-500 dark:text-slate-400 flex items-center truncate max-w-[50%]">
+                            <MapPin size={10} className="mr-1 flex-shrink-0" />
+                            {getPickupName(b.pickupPointId)}
+                          </p>
+                          
+                          {!b.boarded && b.status !== 'NoShow' && (
+                            <div className="flex gap-1">
+                              <button
+                                onClick={() => handleManualCheckIn(b.id)}
+                                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold transition-all active:scale-95"
+                              >
+                                {t.checkIn}
+                              </button>
+                              <button
+                                onClick={() => handleNoShow(b.id)}
+                                className="px-3 py-1.5 bg-rose-500 text-white rounded-lg font-bold transition-all active:scale-95"
+                              >
+                                {t.noShow}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="p-6 text-center text-slate-500 bg-slate-50 dark:bg-slate-800/20 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                      {t.noBookingsToday}
+                    </div>
+                  )}
+                </div>
+
+                {/* Desktop View: Table */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-700">
+                        <th className="p-3 text-sm font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">{t.employee}</th>
+                        <th className="p-3 text-sm font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">{t.pickupPoint}</th>
+                        <th className="p-3 text-sm font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">{t.status}</th>
+                        <th className="p-3 text-sm font-semibold text-slate-500 dark:text-slate-400 text-right whitespace-nowrap">{t.actions}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {driverBookings.length > 0 ? driverBookings.map(b => {
+                        const emp = employees.find(e => e.id === b.employeeId);
+                        return (
+                          <tr key={b.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                            <td className="p-3 whitespace-nowrap">
+                              <span className="font-medium text-slate-800 dark:text-slate-100 text-[12px] leading-[27px]">{emp ? `${emp.firstName} ${emp.lastName}` : t.unknownEmployee}</span>
+                            </td>
+                            <td className="p-3 text-[12px] text-slate-600 dark:text-slate-300 whitespace-nowrap">{getPickupName(b.pickupPointId)}</td>
+                            <td className="p-3 whitespace-nowrap">
+                              {b.status === 'NoShow' ? (
+                                <Badge variant="danger">{t.noShow}</Badge>
+                              ) : b.boarded ? (
+                                <Badge variant="success">{t.boarded}</Badge>
+                              ) : (
+                                <Badge variant="warning">{t.pending}</Badge>
+                              )}
+                            </td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                              {!b.boarded && b.status !== 'NoShow' && (
+                                <div className="flex justify-end space-x-2">
+                                  <button
+                                    onClick={() => handleManualCheckIn(b.id)}
+                                    className="px-3 py-1 bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-800/50 text-emerald-700 dark:text-emerald-400 rounded-lg text-sm transition-colors whitespace-nowrap"
+                                  >
+                                    {t.manualCheckIn}
+                                  </button>
+                                  <button
+                                    onClick={() => handleNoShow(b.id)}
+                                    className="px-3 py-1 bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/30 dark:hover:bg-rose-800/50 text-rose-700 dark:text-rose-400 rounded-lg text-sm transition-colors whitespace-nowrap"
+                                  >
+                                    {t.markNoShow}
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      }) : (
+                        <tr>
+                          <td colSpan={4} className="p-4 text-center text-slate-500 dark:text-slate-400">
+                            {t.noBookingsToday}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+        </Card>
+      </div>
+    );
+  };
+
   const renderDailyReport = () => {
     const dailyBookings = bookings.filter(b => b.date === selectedReportDate && b.status === 'Confirmed');
     const cancelledBookings = bookings.filter(b => b.date === selectedReportDate && b.status === 'Cancelled');
@@ -1427,13 +1812,13 @@ export default function App() {
                 const emp = employees.find(e => e.id === b.employeeId);
                 return (
                   <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300">{emp ? `${emp.firstName} ${emp.lastName}` : b.employeeId}</td>
-                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400">{emp ? emp.department : '-'}</td>
-                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400">{b.shift === 'Morning' ? t.morning : t.night}</td>
-                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400">{b.direction === 'To Work' ? t.toWork : t.home}</td>
-                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400">{getRouteName(b.routeId)}</td>
-                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400">{getPickupName(b.pickupPointId)}</td>
-                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400">{b.time}</td>
+                    <td className="px-4 py-4 text-sm text-slate-700 dark:text-slate-300 whitespace-nowrap">{emp ? `${emp.firstName} ${emp.lastName}` : b.employeeId}</td>
+                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{emp ? emp.department : '-'}</td>
+                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{b.shift === 'Morning' ? t.morning : t.night}</td>
+                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{b.direction === 'To Work' ? t.toWork : t.home}</td>
+                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{getRouteName(b.routeId)}</td>
+                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{getPickupName(b.pickupPointId)}</td>
+                    <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">{b.time}</td>
                   </tr>
                 );
               }) : (
@@ -1450,7 +1835,7 @@ export default function App() {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">รายงานการจองรายวัน</h3>
+          <h3 className="font-bold text-slate-800 dark:text-slate-100" style={{ fontSize: '14px', lineHeight: '25px' }}>รายงานการจองรายวัน</h3>
           <div className="flex items-center space-x-2">
             <button
               onClick={() => {
@@ -1499,13 +1884,14 @@ export default function App() {
 
   const navItems = [
     { id: 'dashboard', label: t.dashboard, icon: LayoutDashboard, roles: ['Admin'] },
+    { id: 'booking', label: t.booking, icon: CalendarCheck, roles: ['Admin', 'Employee'] },
+    { id: 'my-bookings', label: t.myBookings, icon: Clock, roles: ['Admin', 'Employee'] },
     { id: 'routes', label: t.routes, icon: Bus, roles: ['Admin'] },
     { id: 'pickups', label: t.pickups, icon: MapPin, roles: ['Admin'] },
     { id: 'times', label: t.times, icon: Clock, roles: ['Admin'] },
     { id: 'employees', label: t.employees, icon: Users, roles: ['Admin'] },
-    { id: 'booking', label: t.booking, icon: CalendarCheck, roles: ['Admin', 'Employee'] },
-    { id: 'my-bookings', label: t.myBookings, icon: Clock, roles: ['Admin', 'Employee'] },
     { id: 'daily-report', label: t.dailyReport, icon: Calendar, roles: ['Admin'] },
+    { id: 'driver-dashboard', label: t.driverDashboard, icon: Bus, roles: ['Admin', 'Driver'] },
   ].filter(item => item.roles.includes(userRole));
 
   if (userRole === 'Guest') {
@@ -1536,7 +1922,7 @@ export default function App() {
                     const role = emp.role || 'Employee';
                     setUserRole(role);
                     setCurrentEmployeeId(emp.id);
-                    setActiveTab(role === 'Admin' ? 'dashboard' : 'booking');
+                    setActiveTab(role === 'Admin' ? 'dashboard' : role === 'Driver' ? 'driver-dashboard' : 'booking');
                     localStorage.setItem('shuttle-role', role);
                     localStorage.setItem('shuttle-employeeId', emp.id);
                   } else {
@@ -1566,7 +1952,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
+    <div className="h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 flex font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
       {/* Sidebar Backdrop */}
       {isSidebarOpen && (
         <div 
@@ -1595,26 +1981,27 @@ export default function App() {
                   setActiveTab(item.id as any);
                   if (window.innerWidth < 1024) setIsSidebarOpen(false);
                 }}
-                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all duration-200 ${activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200'}`}
+                className={`w-full flex items-center space-x-3 px-4 py-1 rounded-xl transition-all duration-200 ${activeTab === item.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200'}`}
+                style={{ height: '36px' }}
               >
-                <item.icon size={20} />
-                <span>{item.label}</span>
-                {activeTab === item.id && <ChevronRight size={16} className="ml-auto" />}
+                <item.icon size={18} />
+                <span style={{ fontSize: '14px' }}>{item.label}</span>
+                {activeTab === item.id && <ChevronRight size={14} className="ml-auto" />}
               </button>
             ))}
           </nav>
 
           <div className="p-4 border-t border-slate-50 dark:border-slate-800">
             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl flex items-center space-x-3">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${userRole === 'Admin' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
-                {userRole === 'Admin' ? 'AD' : 'EM'}
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${userRole === 'Admin' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' : userRole === 'Driver' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
+                {userRole === 'Admin' ? 'AD' : userRole === 'Driver' ? 'DR' : 'EM'}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
-                  {userRole === 'Admin' ? 'Administrator' : 'Employee User'}
+                  {userRole === 'Admin' ? 'Administrator' : userRole === 'Driver' ? 'Driver User' : 'Employee User'}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                  {userRole === 'Admin' ? t.admin : t.employee}
+                  {userRole === 'Admin' ? t.admin : userRole === 'Driver' ? t.driver : t.employee}
                 </p>
               </div>
               <button 
@@ -1633,7 +2020,7 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className={`flex-1 transition-all duration-300 ${isSidebarOpen ? 'lg:ml-64' : ''}`}>
+      <main className="flex-1 min-w-0 h-screen overflow-y-auto transition-all duration-300 lg:ml-64">
         <header className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-3 sm:space-x-4">
             <button 
@@ -1642,7 +2029,7 @@ export default function App() {
             >
               <Menu size={20} />
             </button>
-            <h2 className="text-lg sm:text-xl font-bold text-slate-800 dark:text-slate-100 capitalize truncate max-w-[150px] sm:max-w-none">
+            <h2 className="font-bold text-slate-800 dark:text-slate-100 capitalize truncate max-w-[150px] sm:max-w-none" style={{ fontSize: '15px' }}>
               {navItems.find(i => i.id === activeTab)?.label || activeTab}
             </h2>
           </div>
@@ -1700,6 +2087,7 @@ export default function App() {
                   {activeTab === 'booking' && renderBookingForm()}
                   {activeTab === 'my-bookings' && renderMyBookings()}
                   {activeTab === 'daily-report' && renderDailyReport()}
+                  {activeTab === 'driver-dashboard' && renderDriverDashboard()}
                 </>
               )}
             </motion.div>
@@ -1863,6 +2251,7 @@ export default function App() {
               <select name="role" defaultValue={editingEmployee?.role || 'Employee'} required className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none dark:text-slate-100">
                 <option value="Employee">Employee</option>
                 <option value="Admin">Admin</option>
+                <option value="Driver">Driver</option>
               </select>
             </div>
           </div>
